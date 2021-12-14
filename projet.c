@@ -7,12 +7,13 @@
 #include <sys/ipc.h>
 #include <sys/sem.h>
 #include <sys/msg.h>
+#include <sys/types.h>
 
 
 /**********************************
 Gestion des fils de message
 **********************************/
-int msgid_1;
+int msgid_1, msg_rep_id_1;
 
 typedef struct {
     long type;
@@ -20,6 +21,12 @@ typedef struct {
     int destination;
     int type_vehicule;
 }msg_PlaceDispo;
+
+typedef struct {
+    long type;
+    pid_t pidEmetteur;
+    int bool_ok;
+}rep_PlaceDispo;
 
 /**********************************
 Gestion des semaphores
@@ -106,31 +113,74 @@ int define_quai(int destination)
 /**********************************
 Fonction de fonctionnement d'un véhicule
 **********************************/
+void displayVehiculeInfo(int type, int destination, int nb_conteneur, int statut, int suite)
+{
+   //Type de vehicule
+   if(type==1 && destination==1)
+   {
+   	  printf("Camion");
+   }
+   
+   //Nombre conteneur
+   printf(" %d (%d conteneur(s)| ",getpid(),nb_conteneur);
+   
+   //Destination
+   if(destination==1){
+   	  printf("Belfort");
+   }
+   
+   printf(" | ");
+   
+   //Statut
+   if(statut==-1){
+   	  printf("en attente place à quai   ");
+   }
+   else if(statut==0){
+   	  printf("en attente de dechargement");
+   }
+   else if(statut==1){
+   	  printf("en attente de chargement  ");
+   }else{
+   	  printf("                          ");
+   }
+   
+   if(suite==0){
+   	  printf(")\n");
+   }else{
+      printf(") : ");
+   }   
+}
+
 void vehicule(int type, int destination, int nb_conteneur)
 { 
   int quai, contenance_virtuelle;
   msg_PlaceDispo msgToSend;
+  rep_PlaceDispo msgRep;
 
   //Définition des données propres véhicule
   quai=define_quai(destination);
-  printf("Véhicule %d : Je cherche une place pour me garer\n",getpid());
+  displayVehiculeInfo(type,destination,nb_conteneur,-1,0);
   
   /*Se garer*/
   P(quai-1,define_semid_type(type));
-  printf("Véhicule %d : Je me gare\n",getpid());
-  
+  if(nb_conteneur!=0){
+    displayVehiculeInfo(type,destination,nb_conteneur,0,0);
+  }
+
   //Vider le véhicule
   while(nb_conteneur!=0)                              
   {
     P(destination-1,sem_id_dest);
-    printf("Véhicule %d : Je décharge un conteneur\n",getpid());
+    displayVehiculeInfo(type,destination,nb_conteneur,999,1);
+    printf("Je décharge un conteneur\n");
     nb_conteneur-=1;
   }
 
   //Definir les variables pour repartir
   destination=destination;
   contenance_virtuelle=1;
-  printf("Véhicule %d : Ma nouvelle destination est %d\n",getpid(),destination);
+  displayVehiculeInfo(type,destination,nb_conteneur,999,1);
+  printf("Ma nouvelle destination est %d\n",destination);
 
   //Remplir le véhicule
   while(contenance_virtuelle!=0)                      
@@ -140,21 +190,24 @@ void vehicule(int type, int destination, int nb_conteneur)
 		msgToSend.pidEmetteur=getpid();
     msgToSend.destination=destination;
     msgToSend.type_vehicule=type;
-    if(msgsnd(msgid_1, &msgToSend, sizeof(msg_PlaceDispo) - 4,0)==-1){
-      printf("message non envoyé\n");
-    }
-
+    msgsnd(msgid_1, &msgToSend, sizeof(msg_PlaceDispo) - 4,0);
+	
+	displayVehiculeInfo(type,destination,nb_conteneur,1,0);
+	//si la réponse reçue est 1 alors on va charger un conteneur, sinon non
     contenance_virtuelle-=1;
-    //if(read())
-    //{
+    msgrcv(msg_rep_id_1, &msgRep, sizeof(rep_PlaceDispo) - 4, 1,getpid());
+    if(msgRep.bool_ok==1)
+    {
       nb_conteneur+=1;
-      printf("Véhicule %d : Je charge un conteneur\n",getpid());
-    //}
+      displayVehiculeInfo(type,destination,nb_conteneur,999,1);
+      printf("Je charge un conteneur\n");
+    }
   }
 
   //Partir
   V(quai-1,define_semid_type(type));
-  printf("Véhicule %d : Je m'en vais\n",getpid());
+  displayVehiculeInfo(type,destination,nb_conteneur,999,1);
+  printf("Je m'en vais\n");
   exit(1);
 }
 
@@ -163,20 +216,33 @@ Fonction de fonctionnement d'un portique
 **********************************/
 void portique(int quai)
 {
-  int destination;
+  int destination,sem_value;
   msg_PlaceDispo msgRecu;
-
+  rep_PlaceDispo msgRep;
+ 
+  msgRep.pidEmetteur=getpid();
+  
   while(1)
   {
-    if(msgrcv(msgid_1, &msgRecu, sizeof(msg_PlaceDispo) - 4, 1,getpid())!=-1){
-      printf("Portique 1 : J'ai reçu un message avec destination : %d de la part de %d\n",msgRecu.destination,msgRecu.type);
-    }    
-    /*while()
+    if(msgrcv(msgid_1, &msgRecu, sizeof(msg_PlaceDispo) - 4, 1,getpid())!=-1)
     {
-      read()
-    }
-    V(destination);
-    write();*/
+		destination=msgRecu.destination;
+		
+		sem_value=semctl(sem_id_dest,destination-1,GETVAL);
+		printf("Portique j'ai reçu un message de %d\n",msgRecu.pidEmetteur);
+		
+		if(sem_value<0){
+			msgRep.bool_ok=1;
+			msgRep.type=msgRecu.pidEmetteur;
+			V(destination-1,sem_id_dest);
+			msgsnd(msg_rep_id_1, &msgRep, sizeof(rep_PlaceDispo) - 4,0);
+		}
+		else{
+			msgRep.bool_ok=0;
+			msgRep.type=msgRecu.pidEmetteur;
+			msgsnd(msg_rep_id_1, &msgRep, sizeof(rep_PlaceDispo) - 4,0);
+		}
+	 }
   }
 }
 
@@ -220,7 +286,7 @@ int main(int argc, char *argv[])
 
   //Creation file de message par quai
   msgid_1 = msgget(SKEY, 0750 | IPC_CREAT | IPC_EXCL);
-  printf("%d\n",msgid_1);
+  msg_rep_id_1 = msgget(SKEY, 0750 | IPC_CREAT | IPC_EXCL);
 
 
   //Créations des portiques
