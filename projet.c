@@ -163,6 +163,9 @@ void vehicule(int type, int destination, int nb_conteneur)
   
   /*Se garer*/
   P(quai-1,define_semid_type(type));
+  displayVehiculeInfo(type,destination,nb_conteneur,-1,1);
+  printf("Je me gare\n");
+  sleep(1);
   if(nb_conteneur!=0){
     displayVehiculeInfo(type,destination,nb_conteneur,0,0);
   }
@@ -196,6 +199,7 @@ void vehicule(int type, int destination, int nb_conteneur)
 	//si la réponse reçue est 1 alors on va charger un conteneur, sinon non
     contenance_virtuelle-=1;
     msgrcv(msg_rep_id_1, &msgRep, sizeof(rep_PlaceDispo) - 4, 1,getpid());
+    printf("Reponse de la part du portique : %d\n",msgRep.bool_ok);
     if(msgRep.bool_ok==1)
     {
       nb_conteneur+=1;
@@ -226,22 +230,23 @@ void portique(int quai)
   {
     if(msgrcv(msgid_1, &msgRecu, sizeof(msg_PlaceDispo) - 4, 1,getpid())!=-1)
     {
-		destination=msgRecu.destination;
-		
-		sem_value=semctl(sem_id_dest,destination-1,GETVAL);
-		printf("Portique j'ai reçu un message de %d\n",msgRecu.pidEmetteur);
-		
-		if(sem_value<0){
-			msgRep.bool_ok=1;
-			msgRep.type=msgRecu.pidEmetteur;
-			V(destination-1,sem_id_dest);
-			msgsnd(msg_rep_id_1, &msgRep, sizeof(rep_PlaceDispo) - 4,0);
-		}
-		else{
-			msgRep.bool_ok=0;
-			msgRep.type=msgRecu.pidEmetteur;
-			msgsnd(msg_rep_id_1, &msgRep, sizeof(rep_PlaceDispo) - 4,0);
-		}
+      destination=msgRecu.destination;
+      
+      sem_value=semctl(sem_id_dest,destination-1,GETVAL);
+      printf("Portique j'ai reçu un message de %d\n",msgRecu.pidEmetteur);
+      
+      if(sem_value<0){
+        msgRep.bool_ok=1;
+        msgRep.type=msgRecu.pidEmetteur;
+        V(destination-1,sem_id_dest);
+        sleep(2);
+        msgsnd(msg_rep_id_1, &msgRep, sizeof(rep_PlaceDispo) - 4,0);
+      }
+      else{
+        msgRep.bool_ok=8;
+        msgRep.type=msgRecu.pidEmetteur;
+        msgsnd(msg_rep_id_1, &msgRep, sizeof(rep_PlaceDispo) - 4,0);
+      }
 	 }
   }
 }
