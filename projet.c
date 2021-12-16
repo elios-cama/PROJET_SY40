@@ -153,7 +153,7 @@ void displayVehiculeInfo(int type, int destination, int nb_conteneur, int statut
 
 void vehicule(int type, int destination, int nb_conteneur)
 { 
-  int quai, contenance_virtuelle;
+  int quai, contenance_virtuelle, nb_decharge=0;
   msg_PlaceDispo msgToSend;
   rep_PlaceDispo msgRep;
 
@@ -166,40 +166,58 @@ void vehicule(int type, int destination, int nb_conteneur)
   displayVehiculeInfo(type,destination,nb_conteneur,-1,1);
   printf("Je me gare\n");
   sleep(1);
+
   if(nb_conteneur!=0){
     displayVehiculeInfo(type,destination,nb_conteneur,0,0);
   }
 
   //Vider le véhicule
   while(nb_conteneur!=0)                              
-  {
+  {  
+    //sleep(1);
+    //printf("demande dec avec sem_id=%d et sem_num=%d\n",sem_id_dest,destination-1);
     P(destination-1,sem_id_dest);
     displayVehiculeInfo(type,destination,nb_conteneur,999,1);
     printf("Je décharge un conteneur\n");
+    sleep(.5);
     nb_conteneur-=1;
+    nb_decharge+=1;
   }
 
   //Definir les variables pour repartir
+  sleep(1);
   destination=destination;
   contenance_virtuelle=1;
-  displayVehiculeInfo(type,destination,nb_conteneur,999,1);
-  printf("Ma nouvelle destination est %d\n",destination);
+  //Si le véhicule viens de décharger des conteneurs on le passe en mode expedition
+  if(nb_decharge!=0)
+  {
+    displayVehiculeInfo(type,destination,nb_conteneur,999,1);
+    printf("Nettoyage du véhicule\n");
+    sleep(4);
+    displayVehiculeInfo(type,destination,nb_conteneur,999,1);
+    printf("Ma nouvelle destination est %d\n",destination);
+  }  
+  
+
+  
+
 
   //Remplir le véhicule
   while(contenance_virtuelle!=0)                      
   {
     //Construction du message place disponible
-    msgToSend.type=getppid();
+    msgToSend.type=1;
 		msgToSend.pidEmetteur=getpid();
     msgToSend.destination=destination;
     msgToSend.type_vehicule=type;
     msgsnd(msgid_1, &msgToSend, sizeof(msg_PlaceDispo) - 4,0);
 	
-	displayVehiculeInfo(type,destination,nb_conteneur,1,0);
-	//si la réponse reçue est 1 alors on va charger un conteneur, sinon non
+	  displayVehiculeInfo(type,destination,nb_conteneur,1,0);
+	  //si la réponse reçue est 1 alors on va charger un conteneur, sinon non
     contenance_virtuelle-=1;
-    msgrcv(msg_rep_id_1, &msgRep, sizeof(rep_PlaceDispo) - 4, 1,getpid());
-    printf("Reponse de la part du portique : %d\n",msgRep.bool_ok);
+    msgrcv(msg_rep_id_1, &msgRep, sizeof(rep_PlaceDispo) - 4, 2,1);
+    //printf("Reponse de la part du portique : %d\n",msgRep.bool_ok);
+
     if(msgRep.bool_ok==1)
     {
       nb_conteneur+=1;
@@ -228,23 +246,25 @@ void portique(int quai)
   
   while(1)
   {
-    if(msgrcv(msgid_1, &msgRecu, sizeof(msg_PlaceDispo) - 4, 1,getpid())!=-1)
+    if(msgrcv(msgid_1, &msgRecu, sizeof(msg_PlaceDispo) - 4, 1,1)!=-1)
     {
       destination=msgRecu.destination;
+      //printf("Portique j'ai reçu un message de %d je regarde si on a une demande de dechargement\n",msgRecu.pidEmetteur);
+      //sleep(.5);
+
+      sem_value=semctl(sem_id_dest,destination-1,GETNCNT);
+      //printf("sem_value=%d avec sem_id=%d et sem_num=%d\n",sem_value,sem_id_dest,destination-1);
       
-      sem_value=semctl(sem_id_dest,destination-1,GETVAL);
-      printf("Portique j'ai reçu un message de %d\n",msgRecu.pidEmetteur);
-      
-      if(sem_value<0){
+      if(sem_value>0){
         msgRep.bool_ok=1;
-        msgRep.type=msgRecu.pidEmetteur;
+        msgRep.type=2;
         V(destination-1,sem_id_dest);
-        sleep(2);
+        sleep(1);
         msgsnd(msg_rep_id_1, &msgRep, sizeof(rep_PlaceDispo) - 4,0);
       }
       else{
         msgRep.bool_ok=8;
-        msgRep.type=msgRecu.pidEmetteur;
+        msgRep.type=2;
         msgsnd(msg_rep_id_1, &msgRep, sizeof(rep_PlaceDispo) - 4,0);
       }
 	 }
@@ -263,6 +283,7 @@ void gestionnaire_creation_vehicule()
     pid=fork();
     if(pid==0){
       vehicule(1, 1, i%2);
+      sleep(.1);
     }
     else{
       
