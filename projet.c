@@ -4,169 +4,365 @@
 #include <stdlib.h>
 #include <time.h>
 #include <sys/wait.h>
+#include <sys/ipc.h>
+#include <sys/sem.h>
+#include <sys/msg.h>
+#include <sys/types.h>
 
-#define CAPACITE_ENTREPOT 20
-#define CAPACITE_QUAI 1
-void traitant_vide(int signum) {}
 
+/**********************************
+Gestion des fils de message
+**********************************/
+int msgid_1, msg_rep_id_1, msgid_2, msg_rep_id_2;
 
-int creer_entrepot(int tube_portique,  int tube_entrepot)
+typedef struct {
+    long type;
+    pid_t pidEmetteur;
+    int destination;
+    int type_vehicule;
+}msg_PlaceDispo;
+
+typedef struct {
+    long type;
+    pid_t pidEmetteur;
+    int bool_ok;
+}rep_PlaceDispo;
+
+/**********************************
+Gestion des semaphores
+**********************************/
+#define IFLAGS (SEMPERM | IPC_CREAT)
+#define SKEY   (key_t) IPC_PRIVATE	
+#define SEMPERM 0600	
+struct sembuf sem_oper_V ; 
+int sem_id_camion,sem_id_dest,sem_id_bateau ;
+
+int initsem_parking(key_t semkey) 
 {
-  int pid = fork();
-  if(pid != 0)
-    return pid;
-
-  int stock = 0;
-  printf("Stock de l'entrepot: %d\n", stock);
-
-  while(1)
-  {
-    int valeur;
-    read(tube_entrepot, &valeur, sizeof(int));
-
-    stock += valeur;
-
-    printf("Stock de l'entrepot: %d\n", stock);
-    
-
-}}
-
-int creer_portique(int tube_portique, int tube_entrepot){
-    int pid = fork();
-    if(pid != 0)
-        return pid;
-
-  printf("portique créé\n");
-
-  sigset_t new_mask, old_mask;
-  sigemptyset(&new_mask);
-  sigaddset(&new_mask, SIGUSR1);
-  sigprocmask(SIG_BLOCK, &new_mask, &old_mask);
-
-  signal(SIGUSR1, traitant_vide);
-  while(1)
-  {
-    int vehicule[2];
-    read(tube_portique, &vehicule, 2 * sizeof(int));
-    printf("Déchargement des containers du vehicule %d en cours\n", vehicule[0]);
-    write(tube_entrepot, vehicule + 1, sizeof(int));
-    sigsuspend(&old_mask);
-    printf("Déchargement des containers du vehicule %d terminé\n", vehicule[0]);
-    kill(vehicule[0], SIGUSR2);
-  }
+  int status = 0;		
+  int semid_init;
+    union semun {
+    int val;
+    struct semid_ds *stat;
+    ushort * array;
+  } ctl_arg;
+    if ((semid_init = semget(semkey, 2, IFLAGS)) > 0) {
+        ushort array[2] = {0, 0};
+        ctl_arg.array = array;
+        status = semctl(semid_init, 0, SETALL, ctl_arg);
+    }
+    if (semid_init == -1 || status == -1) { 
+  perror("Erreur initsem");
+  return (-1);
+    } else return (semid_init);
 }
 
 
-
-int creer_quai(int tube_dechargement, int tube_portique)
+int initsem_port(key_t semkey) 
 {
-  int pid = fork();
-  if(pid != 0)
-    return pid;
-
-  printf("Quai de déchargement créé\n");
-
-  sigset_t new_mask, old_mask;
-  sigemptyset(&new_mask);
-  sigaddset(&new_mask, SIGUSR1);
-  sigprocmask(SIG_BLOCK, &new_mask, &old_mask);
-
-  signal(SIGUSR1, traitant_vide);
-
-  while(1)
-  {
-    int vehicule[2];
-    read(tube_dechargement, &vehicule, 2 * sizeof(int));
-    printf("Déchargement du vehicule %d en cours\n", vehicule[0]);
-    write(tube_portique, vehicule + 1, sizeof(int));
-    sigsuspend(&old_mask);
-    printf("Déchargement du vehicule %d terminé\n", vehicule[0]);
-    kill(vehicule[0], SIGUSR2);
-  }
+  int status = 0;		
+  int semid_init;
+    union semun {
+    int val;
+    struct semid_ds *stat;
+    ushort * array;
+  } ctl_arg;
+    if ((semid_init = semget(semkey, 2, IFLAGS)) > 0) {
+        ushort array[2] = {0, 0};
+        ctl_arg.array = array;
+        status = semctl(semid_init, 0, SETALL, ctl_arg);
+    }
+    if (semid_init == -1 || status == -1) { 
+  perror("Erreur initsem");
+  return (-1);
+    } else return (semid_init);
 }
 
 
-
-void creer_vehicule(int tube_dechargement)
+int initsem_destination(key_t semkey) 
 {
-  int pid = fork();
-  if(pid != 0)
-    return;
-
-  sigset_t new_mask, old_mask;
-  sigemptyset(&new_mask);
-  sigaddset(&new_mask, SIGUSR2);
-  sigprocmask(SIG_BLOCK, &new_mask, &old_mask);
-
-  signal(SIGUSR2, traitant_vide);
-
-  int container = 2;
-  int requete[2] = { getpid(), container };
-
+  int status = 0;		
+  int semid_init;
+    union semun {
+    int val;
+    struct semid_ds *stat;
+    ushort * array;
+  } ctl_arg;
+    if ((semid_init = semget(semkey, 2, IFLAGS)) > 0) {
+        ushort array[10] = {0};
+        ctl_arg.array = array;
+        status = semctl(semid_init, 0, SETALL, ctl_arg);
+    }
+    if (semid_init == -1 || status == -1) { 
+  perror("Erreur initsem");
+  return (-1);
+    } else return (semid_init);
+}
  
-    printf("vehicule %d s'amarre au quai de déchargement et transporte %d containers\n", getpid(), container);
-    write(tube_dechargement, requete, 2 * sizeof(int));
-    sigsuspend(&old_mask);
-    printf("vehicule %d s'en va après avoir déchargé %d container\n", getpid(), container);
+void P(int semnum,int semid) {
+  sem_oper_V.sem_num = semnum;
+  sem_oper_V.sem_op  = -1 ;
+  sem_oper_V.sem_flg  = 0 ;
+
+  semop(semid,&sem_oper_V,1);
+}
+
+void V(int semnum,int semid) {
+  sem_oper_V.sem_num = semnum;
+  sem_oper_V.sem_op  = 1 ;
+  sem_oper_V.sem_flg  = 0 ;
+
+  semop(semid,&sem_oper_V,1);
+}
+
+/**********************************
+Fonction qui retourne le sem_id en fonction du type de véhicule
+**********************************/
+int define_semid_type(int type)
+{
+  if(type==1){
+    return sem_id_camion;
+  }else if(type == 2){
+    return sem_id_bateau;
+  }
+}
+
+/**********************************
+Fonction qui retourne le numéro du quai concerné par une destination
+**********************************/
+int define_quai(int destination)
+{
+  if(destination == 1){
+    return 1;
+  }else if(destination == 2){
+    return 2;
+  }
+}
+
+/**********************************
+Fonction de fonctionnement d'un véhicule
+**********************************/
+void displayVehiculeInfo(int type, int destination, int nb_conteneur, int statut, int suite)
+{
+   //Type de vehicule
+   if(type==1 && destination==1)
+   {
+   	  printf("Camion");
+   }else if(type == 2 && destination == 2){
+     printf("bateau");
+   }
+   
+   //Nombre conteneur
+   printf(" %d (%d conteneur(s)| ",getpid(),nb_conteneur);
+   
+   //Destination
+   if(destination==1){
+   	  printf("Belfort");
+   }else if(destination ==2){
+     printf("Troyes");
+   }
+   
+   printf(" | ");
+   
+   //Statut
+   if(statut==-1){
+   	  printf("en attente place à quai   ");
+   }
+   else if(statut==0){
+   	  printf("en attente de dechargement");
+   }
+   else if(statut==1){
+   	  printf("en attente de chargement  ");
+   }else{
+   	  printf("                          ");
+   }
+   
+   if(suite==0){
+   	  printf(")\n");
+   }else{
+      printf(") : ");
+   }   
+}
+
+void vehicule(int type, int destination, int nb_conteneur)
+{ 
+  int quai, contenance_virtuelle, nb_decharge=0;
+  msg_PlaceDispo msgToSend;
+  rep_PlaceDispo msgRep;
+
+  //Définition des données propres véhicule
+  quai=define_quai(destination);
+  displayVehiculeInfo(type,destination,nb_conteneur,-1,0);
+  
+  /*Se garer*/
+  P(quai-1,define_semid_type(type));
+  displayVehiculeInfo(type,destination,nb_conteneur,-1,1);
+  printf("Je me gare\n");
+  sleep(1);
+
+  if(nb_conteneur!=0){
+    displayVehiculeInfo(type,destination,nb_conteneur,0,0);
+  }
+
+  //Vider le véhicule
+  while(nb_conteneur!=0)                              
+  {  
+    //sleep(1);
+    //printf("demande dec avec sem_id=%d et sem_num=%d\n",sem_id_dest,destination-1);
+    P(destination-1,sem_id_dest);
+    displayVehiculeInfo(type,destination,nb_conteneur,999,1);
+    printf("Je décharge un conteneur\n");
+    sleep(.5);
+    nb_conteneur-=1;
+    nb_decharge+=1;
+  }
+
+  //Definir les variables pour repartir
+  sleep(1);
+  destination=destination;
+  contenance_virtuelle=1;
+  //Si le véhicule viens de décharger des conteneurs on le passe en mode expedition
+  if(nb_decharge!=0)
+  {
+    displayVehiculeInfo(type,destination,nb_conteneur,999,1);
+    printf("Nettoyage du véhicule\n");
+    sleep(4);
+    displayVehiculeInfo(type,destination,nb_conteneur,999,1);
+    printf("Ma nouvelle destination est %d\n",destination);
+  }  
   
 
-  exit(0);
+  
+
+
+  //Remplir le véhicule
+  while(contenance_virtuelle!=0)                      
+  {
+    //Construction du message place disponible
+    msgToSend.type=1;
+		msgToSend.pidEmetteur=getpid();
+    msgToSend.destination=destination;
+    msgToSend.type_vehicule=type;
+    msgsnd(msgid_1, &msgToSend, sizeof(msg_PlaceDispo) - 4,0);
+	
+	  displayVehiculeInfo(type,destination,nb_conteneur,1,0);
+	  //si la réponse reçue est 1 alors on va charger un conteneur, sinon non
+    contenance_virtuelle-=1;
+    msgrcv(msg_rep_id_1, &msgRep, sizeof(rep_PlaceDispo) - 4, 2,1);
+    //printf("Reponse de la part du portique : %d\n",msgRep.bool_ok);
+
+    if(msgRep.bool_ok==1)
+    {
+      nb_conteneur+=1;
+      displayVehiculeInfo(type,destination,nb_conteneur,999,1);
+      printf("Je charge un conteneur\n");
+    }
+  }
+
+  //Partir
+  V(quai-1,define_semid_type(type));
+  displayVehiculeInfo(type,destination,nb_conteneur,999,1);
+  printf("Je m'en vais\n");
+  exit(1);
 }
 
-
-int nb_vehicule = 1;
-
-void traitant_sigchld(int signum, siginfo_t *info, void *foo)
+/**********************************
+Fonction de fonctionnement d'un portique
+**********************************/
+void portique(int quai)
 {
-  waitpid(info->si_pid, NULL, 0);
-  printf("vehicule %d est parti\n", info->si_pid);
-  nb_vehicule--;
+  int destination,sem_value;
+  msg_PlaceDispo msgRecu;
+  rep_PlaceDispo msgRep;
+ 
+  msgRep.pidEmetteur=getpid();
+  
+  while(1)
+  {
+    if(msgrcv(msgid_1, &msgRecu, sizeof(msg_PlaceDispo) - 4, 1,1)!=-1)
+    {
+      destination=msgRecu.destination;
+      //printf("Portique j'ai reçu un message de %d je regarde si on a une demande de dechargement\n",msgRecu.pidEmetteur);
+      //sleep(.5);
+
+      sem_value=semctl(sem_id_dest,destination-1,GETNCNT);
+      //printf("sem_value=%d avec sem_id=%d et sem_num=%d\n",sem_value,sem_id_dest,destination-1);
+      
+      if(sem_value>0){
+        msgRep.bool_ok=1;
+        msgRep.type=2;
+        V(destination-1,sem_id_dest);
+        sleep(1);
+        msgsnd(msg_rep_id_1, &msgRep, sizeof(rep_PlaceDispo) - 4,0);
+      }
+      else{
+        msgRep.bool_ok=8;
+        msgRep.type=2;
+        msgsnd(msg_rep_id_1, &msgRep, sizeof(rep_PlaceDispo) - 4,0);
+      }
+	 }
+  }
 }
 
+/**********************************
+Créé les véhicules et portiques
+**********************************/
+void gestionnaire_creation_vehicule()
+{
+  int status = 0;
+  int i=0,pid,wpid;
+  for(i=0;i<=4;i++)
+  {
+    pid=fork();
+    if(pid==0){
+      vehicule(1, 1, i%2);
+      vehicule(2, 2, i%2);
+      sleep(.1);
+    }
+    else{
+      
+    }
+  }
+  while ((wpid = wait(&status)) > 0);
+}
 
-
+/**********************************
+Main
+**********************************/
 int main(int argc, char *argv[])
 {
-  if(argc != 2)
-  {
-    fprintf(stderr, "Usage: %s <nb_ships>\n", argv[0]);
-    return 1;
-  }
-
-  int n = nb_vehicule = atoi(argv[1]);
-
-  srand(time(NULL));
-
-  int tube_dechargement[2], tube_entrepot[2];
-  pipe(tube_dechargement);
-  pipe(tube_entrepot);
-
-
-  int quai_dechargement = creer_quai(tube_dechargement[0], tube_entrepot[1]);
-
-  int entrepot = creer_entrepot( quai_dechargement, tube_entrepot[0]);
-
-  int nb_bateau_dechargement = 0;
+  int pid_portique;
   
 
-  struct sigaction sa;
-  sigemptyset(&sa.sa_mask);
-  sa.sa_flags = SA_SIGINFO;
-  sa.sa_sigaction = traitant_sigchld;
-  sigaction(SIGCHLD, &sa, NULL);
+  //Creation du parking camion avec 2 places par quai
+  sem_id_camion = initsem_parking(SKEY);
+  V(0,sem_id_camion);
+  V(0,sem_id_camion);
+  V(1,sem_id_camion);
+  V(1,sem_id_camion);
 
-  int i;
-  for(i = 0; i < n; i++)
-  {
-    sleep(2);
-    creer_vehicule( tube_dechargement[1]);
+  sem_id_bateau = initsem_port(SKEY);
+  V(0, sem_id_bateau);
+  V(0, sem_id_bateau);
+
+
+  //Creation de la semaphore des destinations
+  sem_id_dest = initsem_destination(SKEY);
+
+  //Creation file de message par quai
+  msgid_1 = msgget(SKEY, 0750 | IPC_CREAT | IPC_EXCL);
+  msg_rep_id_1 = msgget(SKEY, 0750 | IPC_CREAT | IPC_EXCL);
+
+
+  //Créations des portiques
+  pid_portique=fork();
+  if(pid_portique==0){
+    portique(1);
   }
-
-  while(nb_vehicule > 0);
-
+  else{
+    //Creationdes véhicules
+    gestionnaire_creation_vehicule();
+  }
   
-  kill(quai_dechargement, SIGTERM);
-  kill(entrepot,          SIGTERM);
-
   return 0;
 }
