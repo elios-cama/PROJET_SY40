@@ -14,6 +14,11 @@
 Gestion des fils de message
 **********************************/
 int msgid_1, msg_rep_id_1, msgid_2, msg_rep_id_2;
+int temps_dechargement=2;
+int temps_chargement=2;
+int temps_deplassement_portique=2;
+int temps_nettoyage=4;
+int temps_garage=2;
 
 typedef struct {
     long type;
@@ -28,6 +33,16 @@ typedef struct {
     int bool_ok;
 }rep_PlaceDispo;
 
+int define_msg_quai(int quai){
+  if(quai==1){return msgid_1;} 
+  else if(quai==2){return msgid_2;}
+} 
+
+int define_msg_rep_quai(int quai){
+  if(quai==1){return msg_rep_id_1;} 
+  else if(quai==2){return msg_rep_id_2;}
+} 
+
 /**********************************
 Gestion des semaphores
 **********************************/
@@ -35,7 +50,7 @@ Gestion des semaphores
 #define SKEY   (key_t) IPC_PRIVATE	
 #define SEMPERM 0600	
 struct sembuf sem_oper_V ; 
-int sem_id_camion,sem_id_dest ;
+int sem_id_camion,sem_id_dest,sem_id_bateau,sem_id_train ;
 
 int initsem_parking(key_t semkey) 
 {
@@ -65,7 +80,7 @@ int initsem_destination(key_t semkey)
     struct semid_ds *stat;
     ushort * array;
   } ctl_arg;
-    if ((semid_init = semget(semkey, 2, IFLAGS)) > 0) {
+    if ((semid_init = semget(semkey, 20, IFLAGS)) > 0) {
         ushort array[20] = {0};
         ctl_arg.array = array;
         status = semctl(semid_init, 0, SETALL, ctl_arg);
@@ -99,7 +114,11 @@ int define_semid_type(int type)
 {
   if(type==1){
     return sem_id_camion;
-  }
+  }else if(type==2){
+    return sem_id_train;
+  }else if(type==3){
+    return sem_id_bateau;
+  } 
 }
 
 /**********************************
@@ -120,6 +139,13 @@ int define_quai(int destination)
 /**********************************
 Fonction de fonctionnement d'un véhicule
 **********************************/
+int contenance_max(int type)
+{
+  if(type==1){return 1;}
+  else if(type==2){return 6;}
+  if(type==3){return 12;}
+}
+
 void displayVehiculeInfo(int type, int destination, int nb_conteneur, int statut, int suite)
 {
   //Quai
@@ -130,7 +156,11 @@ void displayVehiculeInfo(int type, int destination, int nb_conteneur, int statut
    if(type==1)
    {
    	  printf("Camion");
-   }
+   }else if(type==2){
+      printf("Train ");
+   }else if(type==3){
+      printf("Bateau");
+   } 
    
    //Nombre conteneur
    printf(" %d (%d conteneur(s)| ",getpid(),nb_conteneur);
@@ -183,7 +213,7 @@ void vehicule(int type, int destination, int nb_conteneur)
   P(quai-1,define_semid_type(type));
   displayVehiculeInfo(type,destination,nb_conteneur,-1,1);
   printf("Je me gare\n");
-  sleep(1);
+  sleep(temps_garage);
 
   if(nb_conteneur!=0){
     displayVehiculeInfo(type,destination,nb_conteneur,0,0);
@@ -195,9 +225,10 @@ void vehicule(int type, int destination, int nb_conteneur)
     //sleep(1);
     //printf("demande dec avec sem_id=%d et sem_num=%d\n",sem_id_dest,destination-1);
     P(destination-1,sem_id_dest);
+
     displayVehiculeInfo(type,destination,nb_conteneur,999,1);
     printf("Je décharge un conteneur\n");
-    sleep(.5);
+    sleep(temps_dechargement);
     nb_conteneur-=1;
     nb_decharge+=1;
   }
@@ -205,13 +236,13 @@ void vehicule(int type, int destination, int nb_conteneur)
   //Definir les variables pour repartir
   sleep(1);
   destination=destination;
-  contenance_virtuelle=1;
+  contenance_virtuelle=contenance_max(type);
   //Si le véhicule viens de décharger des conteneurs on le passe en mode expedition
   if(nb_decharge!=0)
   {
     displayVehiculeInfo(type,destination,nb_conteneur,999,1);
     printf("Nettoyage du véhicule\n");
-    sleep(4);
+    sleep(temps_nettoyage);
     displayVehiculeInfo(type,destination,nb_conteneur,999,1);
     printf("Ma nouvelle destination est %d\n",destination);
   }  
@@ -228,12 +259,12 @@ void vehicule(int type, int destination, int nb_conteneur)
 		msgToSend.pidEmetteur=getpid();
     msgToSend.destination=destination;
     msgToSend.type_vehicule=type;
-    msgsnd(msgid_1, &msgToSend, sizeof(msg_PlaceDispo) - 4,0);
+    msgsnd(define_msg_quai(define_quai(destination)), &msgToSend, sizeof(msg_PlaceDispo) - 4,0);
 	
 	  displayVehiculeInfo(type,destination,nb_conteneur,1,0);
 	  //si la réponse reçue est 1 alors on va charger un conteneur, sinon non
     contenance_virtuelle-=1;
-    msgrcv(msg_rep_id_1, &msgRep, sizeof(rep_PlaceDispo) - 4, 2,1);
+    msgrcv(define_msg_rep_quai(define_quai(destination)), &msgRep, sizeof(rep_PlaceDispo) - 4, 2,1);
     //printf("Reponse de la part du portique : %d\n",msgRep.bool_ok);
 
     if(msgRep.bool_ok==1)
@@ -242,6 +273,7 @@ void vehicule(int type, int destination, int nb_conteneur)
       displayVehiculeInfo(type,destination,nb_conteneur,999,1);
       printf("Je charge un conteneur\n");
     }
+    sleep(temps_chargement);
   }
 
   //Partir
@@ -264,10 +296,10 @@ void portique(int quai)
   
   while(1)
   {
-    if(msgrcv(msgid_1, &msgRecu, sizeof(msg_PlaceDispo) - 4, 1,1)!=-1)
+    if(msgrcv(define_msg_quai(quai), &msgRecu, sizeof(msg_PlaceDispo) - 4, 1,1)!=-1)
     {
       destination=msgRecu.destination;
-      //printf("Portique j'ai reçu un message de %d je regarde si on a une demande de dechargement\n",msgRecu.pidEmetteur);
+      //printf("Portique %d j'ai reçu un message de %d je regarde si on a une demande de dechargement\n",quai,msgRecu.pidEmetteur);
       //sleep(.5);
 
       sem_value=semctl(sem_id_dest,destination-1,GETNCNT);
@@ -277,13 +309,15 @@ void portique(int quai)
         msgRep.bool_ok=1;
         msgRep.type=2;
         V(destination-1,sem_id_dest);
-        sleep(1);
-        msgsnd(msg_rep_id_1, &msgRep, sizeof(rep_PlaceDispo) - 4,0);
+        sleep(temps_dechargement);
+        sleep(temps_deplassement_portique);
+        msgsnd(define_msg_rep_quai(quai), &msgRep, sizeof(rep_PlaceDispo) - 4,0);
+        sleep(temps_deplassement_portique);
       }
       else{
         msgRep.bool_ok=8;
         msgRep.type=2;
-        msgsnd(msg_rep_id_1, &msgRep, sizeof(rep_PlaceDispo) - 4,0);
+        msgsnd(define_msg_rep_quai(quai), &msgRep, sizeof(rep_PlaceDispo) - 4,0);
       }
 	 }
   }
@@ -308,17 +342,23 @@ int create_vehicule(int type, int destination, int nb_conteneur)
 
 void gestionnaire_creation_vehicule()
 {
-  create_vehicule(1,1,1);
-  create_vehicule(1,2,1);
-  create_vehicule(1,1,0);
-  create_vehicule(1,1,1);
-  create_vehicule(1,1,0);
-  create_vehicule(1,2,0);
+  int camion,bateau,train,belfort,dijon,lyon;
 
-  create_vehicule(1,10,0);
-  create_vehicule(1,10,1);
-  create_vehicule(1,10,0);
-  create_vehicule(1,10,1);
+  camion=1;
+  train=2;
+  bateau=3;
+
+  belfort=1;
+  dijon=2;
+  lyon=10;
+
+  create_vehicule(camion,lyon,0);
+  create_vehicule(train,lyon,4);
+  create_vehicule(camion,lyon,0);
+  create_vehicule(camion,lyon,0);
+  sleep(20);
+  create_vehicule(bateau,lyon,3);
+  create_vehicule(camion,lyon,0);
 }
 
 /**********************************
@@ -330,11 +370,19 @@ int main(int argc, char *argv[])
 
   //Creation du parking camion avec 2 places par quai
   sem_id_camion = initsem_parking(SKEY);
+  sem_id_bateau = initsem_parking(SKEY);
+  sem_id_train = initsem_parking(SKEY);
+
   V(0,sem_id_camion);
   V(0,sem_id_camion);
   V(1,sem_id_camion);
   V(1,sem_id_camion);
 
+  V(0,sem_id_bateau);
+  V(1,sem_id_bateau);
+
+  V(0,sem_id_train);
+  V(1,sem_id_train);
 
   //Creation de la semaphore des destinations
   sem_id_dest = initsem_destination(SKEY);
